@@ -1,0 +1,144 @@
+# TruthLayer
+
+AI-powered fact verification for documents. Upload a PDF and TruthLayer extracts its factual claims, checks each one, and flags what's accurate, outdated, or false — with an explanation and a source for each verdict.
+
+Marketing content, reports, and decks often contain stale stats or hallucinated figures. TruthLayer acts as a truth layer between a document and its reader.
+
+**Live app:** https://truthlayerai.lovable.app/
+
+## How it works
+
+1. **Upload** — drag and drop a PDF into the app.
+2. **Extract & verify** — the PDF is sent to a Supabase Edge Function, which forwards it to Gemini 2.5 Pro via Lovable's AI Gateway. The model extracts up to 12 key factual claims and evaluates each one against its own knowledge of real-world facts and reputable sources.
+3. **Judge** — each claim is returned with a verdict, a short explanation, the corrected fact, and a source URL.
+4. **Report** — results render as a dashboard: a summary count of Verified / Inaccurate / False claims, and a card per claim with the original text, verdict badge, explanation, corrected fact, and source link.
+
+## Verdict definitions
+
+| Verdict | Meaning |
+|---|---|
+| Verified | Claim is true and well-supported |
+| Inaccurate | Claim is partially wrong or misleading |
+| False | Claim is clearly incorrect |
+
+## Tech stack
+
+- **Frontend:** React 19 + TanStack Start/Router, built and deployed via [Lovable](https://lovable.dev)
+- **UI components:** shadcn/ui (Radix primitives) + Tailwind CSS v4
+- **Backend:** Supabase Edge Function (`fact-check`), written in Deno/TypeScript
+- **Model:** `google/gemini-2.5-pro`, called through Lovable's AI Gateway (`ai.gateway.lovable.dev`)
+- **Hosting:** Lovable Cloud (`truthlayerai.lovable.app`)
+
+## Architecture
+
+```
+PDF upload (browser)
+      │
+      ▼
+Supabase Edge Function: fact-check
+      │
+      ▼
+Lovable AI Gateway (ai.gateway.lovable.dev)
+      │
+      ▼
+Gemini 2.5 Pro
+  — extracts up to 12 factual claims from the PDF
+  — evaluates each claim and returns a verdict, explanation,
+    corrected fact, and source URL
+      │
+      ▼
+JSON response → rendered as report in the UI
+```
+
+## Setup
+
+### Prerequisites
+
+- A [Supabase](https://supabase.com) project (this app's project ref is preconfigured in `src`/`.env` for local dev)
+- A [Lovable](https://lovable.dev) account with AI credits, since the Edge Function authenticates to Gemini via `LOVABLE_API_KEY`
+
+### Environment variables
+
+Frontend (`.env`, already present for local dev against the deployed Supabase project):
+
+```
+VITE_SUPABASE_URL=...
+VITE_SUPABASE_PROJECT_ID=...
+VITE_SUPABASE_PUBLISHABLE_KEY=...
+```
+
+> The publishable/anon key is safe to expose client-side by design, but treat it like any other config value rather than committing fresh secrets to this file going forward.
+
+Backend — set as a Supabase Edge Function secret (**Project → Edge Functions → Secrets**), never in the frontend `.env`:
+
+```
+LOVABLE_API_KEY=your_lovable_api_key
+```
+
+### Deploy the Edge Function
+
+```bash
+supabase functions deploy fact-check
+```
+
+### Run the frontend locally
+
+```bash
+bun install
+bun run dev
+```
+
+## API contract
+
+**Request** — `POST /functions/v1/fact-check`
+
+```json
+{ "pdf_base64": "<base64-encoded PDF, with or without the data URL prefix>" }
+```
+
+**Response**
+
+```json
+{
+  "claims": [
+    {
+      "claim": "ChatGPT hit 100M users in January 2023",
+      "status": "Inaccurate",
+      "explanation": "True at the time, but the figure is now outdated.",
+      "correct_fact": "ChatGPT has surpassed 400M weekly active users as of 2025.",
+      "source": "https://example.com/source"
+    }
+  ]
+}
+```
+
+## Project structure
+
+```
+.
+├── src/                              # React frontend (TanStack Start)
+├── supabase/
+│   ├── config.toml
+│   └── functions/
+│       └── fact-check/
+│           └── index.ts              # Edge Function: extraction + verdict logic
+├── public/
+└── README.md
+```
+
+## Known limitation — read before relying on trap-document results
+
+The current `fact-check` function verifies claims **using the model's own training knowledge**, not a live web search. The system prompt asks Gemini to verify "using your knowledge of real-world facts and reputable sources" — there is no search API call (e.g. Tavily, Gemini grounding, or similar) in the function.
+
+This matters specifically for outdated-statistic trap documents: a claim that was true at the model's training cutoff but has since changed may be incorrectly marked **Verified**, because the model has no way to know the world has moved on. This is the highest-priority fix before relying on this app for time-sensitive fact-checking — adding a live search step (Tavily, Gemini's search-grounding tool, or a Bing/Google Search API call) ahead of the verdict step would close this gap.
+
+Other limitations:
+
+- Claim extraction quality depends on PDF text clarity — scanned/image-only PDFs without OCR are not supported.
+- Capped at 12 claims per document by the current prompt.
+- Source URLs are generated by the model rather than retrieved from an actual search result, so they should be spot-checked rather than trusted blindly.
+
+## License
+
+MIT
+
